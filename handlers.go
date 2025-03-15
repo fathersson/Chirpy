@@ -1,8 +1,10 @@
 package main
 
 import (
+	"Chirpy/domain"
 	"Chirpy/internal/auth"
 	"Chirpy/internal/database"
+	"Chirpy/tokens"
 
 	"encoding/json"
 	"fmt"
@@ -14,7 +16,7 @@ import (
 )
 
 func (cfg *apiConfig) webhooksHandler(w http.ResponseWriter, r *http.Request) {
-	var webhookData Webhook
+	var webhookData domain.Webhook
 	if !checkApiKey(cfg, w, r) {
 		return
 	}
@@ -50,12 +52,18 @@ func (cfg *apiConfig) webhooksHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) deleteChirpHandler(w http.ResponseWriter, r *http.Request) {
-	userId := getUserId(cfg, w, r)
-	if userId == uuid.Nil {
+	userId, err := getUserId(cfg, r.Header)
+	if err != nil {
+		cfg.respondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
-	chirpStruct := getOneChirp(cfg, w, r)
+	chirpId := r.PathValue("chirpID")
+	context := r.Context()
+	chirpStruct, err := getOneChirp(cfg, chirpId, context)
+	if err != nil {
+		cfg.respondWithError(w, http.StatusBadRequest, fmt.Sprintf("%v", err))
+	}
 	if chirpStruct.ID == uuid.Nil {
 		return
 	}
@@ -74,9 +82,14 @@ func (cfg *apiConfig) deleteChirpHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (cfg *apiConfig) putUsersHandler(w http.ResponseWriter, r *http.Request) {
-	userId := getUserId(cfg, w, r)
+	userId, err := getUserId(cfg, r.Header)
+	if err != nil {
+		cfg.respondWithError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
 	body := decoding(cfg, w, r)
-	var err error
+	//var err error
 	body.Password, err = auth.HashPassword(body.Password)
 	if err != nil {
 		cfg.respondWithError(w, 500, "Error hashing password")
@@ -148,30 +161,25 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	user, err := cfg.db.GetUser(r.Context(), returnParams.Email)
 	if err != nil {
-		cfg.respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
-		return
-	}
-	errCheck := auth.CheckPasswordHash(returnParams.Password, user.HashedPassword)
-	if errCheck != nil {
-		cfg.respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		cfg.respondWithError(w, http.StatusUnauthorized, "Incorrect email")
 		return
 	}
 
-	token, err := auth.MakeJWT(user.ID, cfg.tokenSecret)
+	err = tokens.CheckPassword(returnParams.Password, user.HashedPassword)
 	if err != nil {
-		cfg.respondWithError(w, http.StatusInternalServerError, "Error creating token")
+		cfg.respondWithError(w, http.StatusUnauthorized, "Incorrect password")
 		return
 	}
-	refreshToken, err := auth.MakeRefreshToken()
+	token, err := tokens.GetToken(user.ID, cfg.tokenSecret)
 	if err != nil {
-		cfg.respondWithError(w, http.StatusInternalServerError, "Erorr creating refresh token")
+		cfg.respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("%v", err))
 		return
 	}
-	expiresAt := time.Now().Add(60 * 24 * time.Hour) // 60 days
+
 	_, err = cfg.db.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
-		Token:     refreshToken,
+		Token:     token.RefreshToken,
 		UserID:    user.ID,
-		ExpiresAt: expiresAt,
+		ExpiresAt: token.ExpiresAt,
 	})
 	if err != nil {
 		cfg.respondWithError(w, http.StatusInternalServerError, "Error storing refresh token")
@@ -179,13 +187,13 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userStruct := toUser(user)
-	ResponseStruct := LoginResponse{
+	ResponseStruct := domain.LoginResponse{
 		ID:           userStruct.ID,
 		CreatedAt:    userStruct.CreatedAt,
 		UpdatedAt:    userStruct.UpdatedAt,
 		Email:        userStruct.Email,
-		Token:        token,
-		RefreshToken: refreshToken,
+		Token:        token.Token,
+		RefreshToken: token.RefreshToken,
 		ChirpyRed:    userStruct.ChirpyRed,
 	}
 	cfg.respondWithJSON(w, http.StatusOK, ResponseStruct)
@@ -193,7 +201,11 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request) {
 
 func (cfg *apiConfig) createUserHandler(w http.ResponseWriter, r *http.Request) {
 	returnParams := decoding(cfg, w, r)
-	user := CreateRowUser(cfg, w, r, returnParams)
+	context := r.Context()
+	user, err := CreateRowUser(cfg, context, returnParams)
+	if err != nil {
+		cfg.respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+	}
 	userStruct := toUser(user)
 	cfg.respondWithJSON(w, http.StatusCreated, userStruct)
 }
@@ -212,9 +224,13 @@ func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
 
 func (cfg *apiConfig) chirpHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	UserID := getUserId(cfg, w, r)
+	userId, err := getUserId(cfg, r.Header)
+	if err != nil {
+		cfg.respondWithError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
 
-	errLong := errStruct{
+	errLong := domain.ErrStruct{
 		Error: "Chirp is too long",
 	}
 	params := decodingChirp(cfg, w, r)
@@ -222,19 +238,27 @@ func (cfg *apiConfig) chirpHandler(w http.ResponseWriter, r *http.Request) {
 		cfg.respondWithError(w, http.StatusBadRequest, errLong.Error)
 		return
 	}
-	cleanedChirp := Chirp{
+	cleanedChirp := domain.Chirp{
 		Body:   cleanBody(params.Body),
-		UserID: UserID,
+		UserID: userId,
 	}
-
-	chirp := CreateRowChirp(cfg, w, r, cleanedChirp)
+	context := r.Context()
+	chirp, err := CreateRowChirp(cfg, context, cleanedChirp)
+	if err != nil {
+		cfg.respondWithError(w, http.StatusInternalServerError, "Error creating chirp")
+	}
 	chirpStruct := toChirp(chirp)
 	cfg.respondWithJSON(w, http.StatusCreated, chirpStruct)
 }
 
 func (cfg *apiConfig) getOneChirpHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	chirpStruct := getOneChirp(cfg, w, r)
+	chirpId := r.PathValue("chirpID")
+	context := r.Context()
+	chirpStruct, err := getOneChirp(cfg, chirpId, context)
+	if err != nil {
+		cfg.respondWithError(w, http.StatusBadRequest, fmt.Sprintf("%v", err))
+	}
 	cfg.respondWithJSON(w, http.StatusOK, chirpStruct)
 
 }
@@ -243,15 +267,15 @@ func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	sortStr := r.URL.Query().Get("sort")
 	authorStr := r.URL.Query().Get("author_id")
-	if authorStr != "" {
-		GetChirpsAuthor(cfg, w, r, authorStr)
+	context := r.Context()
+	if authorStr == "" {
+		cfg.respondWithError(w, http.StatusBadRequest, "unknown author id")
 		return
 	}
 
-	chirps, err := cfg.db.GetChirps(r.Context())
+	chirps, err := GetChirpsAuthor(cfg, context, authorStr)
 	if err != nil {
-		cfg.respondWithError(w, http.StatusInternalServerError, "Something went wrong3")
-		return
+		cfg.respondWithError(w, http.StatusBadRequest, fmt.Sprintf("%v", err))
 	}
 
 	if sortStr == "desc" {
@@ -264,8 +288,7 @@ func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	chirpStruct := chirpsForStruct(chirps)
-	cfg.respondWithJSON(w, http.StatusOK, chirpStruct)
+	cfg.respondWithJSON(w, http.StatusOK, chirps)
 }
 
 func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {

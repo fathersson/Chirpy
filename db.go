@@ -1,86 +1,75 @@
 package main
 
 import (
+	"Chirpy/domain"
 	"Chirpy/internal/auth"
 	"Chirpy/internal/database"
-	"fmt"
+	"context"
 	"net/http"
 
 	"github.com/google/uuid"
 )
 
-func getUserId(cfg *apiConfig, w http.ResponseWriter, r *http.Request) (userId uuid.UUID) {
-	token, err := auth.GetBearerToken(r.Header)
+func getUserId(cfg *apiConfig, header http.Header) (userId uuid.UUID, err error) {
+	token, err := auth.GetBearerToken(header)
 	if err != nil {
-		cfg.respondWithError(w, http.StatusUnauthorized, "Unauthorized")
-		return
+		return userId, err
 	}
 	userId, err = auth.ValidateJWT(token, cfg.tokenSecret)
 	if err != nil {
-		cfg.respondWithError(w, http.StatusUnauthorized, "Unauthorized")
-		return
+		return userId, err
 	}
-	return userId
+	return userId, nil
 }
 
-func CreateRowUser(cfg *apiConfig, w http.ResponseWriter, r *http.Request, returnParams User) (user database.User) {
+func CreateRowUser(cfg *apiConfig, context context.Context, returnParams User) (user database.User, err error) {
 	createHash(&returnParams)
 	createUserParams := database.CreateUserParams{
 		Email:          returnParams.Email,
 		HashedPassword: returnParams.Password,
 	}
-	user, err := cfg.db.CreateUser(r.Context(), createUserParams)
+	user, err = cfg.db.CreateUser(context, createUserParams)
 	if err != nil {
-		fmt.Printf("Error creating user: %v\n", err) // Выводим ошибку для отладки
-		cfg.respondWithError(w, http.StatusInternalServerError, "Something went wrong")
-		return
+		return database.User{}, err
 	}
-	return user
+	return user, nil
 }
 
-func CreateRowChirp(cfg *apiConfig, w http.ResponseWriter, r *http.Request, cleanedChirp Chirp) (chirp database.Chirp) {
+func CreateRowChirp(cfg *apiConfig, context context.Context, cleanedChirp Chirp) (chirp database.Chirp, err error) {
 	ChirpParams := database.CreateChirpParams{
 		Body:   cleanedChirp.Body,
 		UserID: cleanedChirp.UserID,
 	}
-	chirp, err := cfg.db.CreateChirp(r.Context(), ChirpParams)
+	chirp, err = cfg.db.CreateChirp(context, ChirpParams)
 	if err != nil {
-		fmt.Printf("Error creating chirp: %v\n", err) // Выводим ошибку для отладки
-		cfg.respondWithError(w, http.StatusInternalServerError, "Something went wrong1")
-		return
+		return database.Chirp{}, err
 	}
-	return chirp
+	return chirp, nil
 }
 
-func GetChirpsAuthor(cfg *apiConfig, w http.ResponseWriter, r *http.Request, authorStr string) {
+func GetChirpsAuthor(cfg *apiConfig, context context.Context, authorStr string) (chirpStruct []domain.Chirp, err error) {
 	userId, err := uuid.Parse(authorStr)
 	if err != nil {
-		cfg.respondWithError(w, http.StatusBadRequest, "Invalid author ID")
-		return
+		return []domain.Chirp{}, err
 	}
-	chirps, err := cfg.db.GetChirpsAuthorID(r.Context(), userId)
+	chirps, err := cfg.db.GetChirpsAuthorID(context, userId)
 	if err != nil {
-		cfg.respondWithError(w, http.StatusInternalServerError, "User not found")
-		return
+		return []domain.Chirp{}, err
 	}
-	chirpStruct := chirpsForStruct(chirps)
-	cfg.respondWithJSON(w, http.StatusOK, chirpStruct)
-	return
+	chirpStruct = chirpsForStruct(chirps)
+	return chirpStruct, nil
 }
 
-func getOneChirp(cfg *apiConfig, w http.ResponseWriter, r *http.Request) (chirpStruct Chirp) {
-	chirpID := r.PathValue("chirpID")
-	// Преобразуем строку в uuid.UUID
-	chirpParse, err := uuid.Parse(chirpID)
+func getOneChirp(cfg *apiConfig, chirpId string, context context.Context) (chirp domain.Chirp, err error) {
+	chirpParse, err := uuid.Parse(chirpId)
 	if err != nil {
-		cfg.respondWithError(w, http.StatusBadRequest, "Invalid chirpID format")
-		return
+		return domain.Chirp{}, err
 	}
-	chirp, err := cfg.db.GetChirp(r.Context(), chirpParse)
+
+	dbChirp, err := cfg.db.GetChirp(context, chirpParse)
 	if err != nil {
-		cfg.respondWithError(w, http.StatusNotFound, "Chirp not found")
-		return
+		return domain.Chirp{}, err
 	}
-	chirpStruct = toChirp(chirp)
-	return
+	chirpStruct := toChirp(dbChirp)
+	return chirpStruct, nil
 }

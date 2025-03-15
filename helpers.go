@@ -1,9 +1,11 @@
 package main
 
 import (
+	"Chirpy/domain"
 	"Chirpy/internal/auth"
 	"Chirpy/internal/database"
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -21,17 +23,17 @@ func checkApiKey(cfg *apiConfig, w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-func createHash(returnParams *User) {
+func createHash(returnParams *domain.User) {
 	var err error
 	returnParams.Password, err = auth.HashPassword(returnParams.Password)
 	if err != nil {
-		log.Println(err)
+		slog.Error(fmt.Sprintf("%v", err))
 		return
 	}
 }
 
-func toUser(dbUser database.User) User {
-	return User{
+func toUser(dbUser database.User) domain.User {
+	return domain.User{
 		ID:        dbUser.ID,
 		CreatedAt: dbUser.CreatedAt,
 		UpdatedAt: dbUser.UpdatedAt,
@@ -41,7 +43,7 @@ func toUser(dbUser database.User) User {
 }
 
 func toChirp(dbChirp database.Chirp) Chirp {
-	return Chirp{
+	return domain.Chirp{
 		ID:        dbChirp.ID,
 		CreatedAt: dbChirp.CreatedAt,
 		UpdatedAt: dbChirp.UpdatedAt,
@@ -65,7 +67,7 @@ func cleanBody(body string) (bodyResp string) {
 	return
 }
 
-func chirpsForStruct(chirps []database.Chirp) (chirpStruct []Chirp) {
+func chirpsForStruct(chirps []database.Chirp) (chirpStruct []domain.Chirp) {
 	for _, v := range chirps {
 		chirpStruct = append(chirpStruct, toChirp(v))
 	}

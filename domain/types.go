@@ -1,19 +1,16 @@
-package main
+package domain
 
 import (
-	"Chirpy/internal/database"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-type apiConfig struct {
-	fileserverHits atomic.Int32
-	db             *database.Queries
-	platform       string
-	tokenSecret    string
-	polkaKey       string
+type Env struct {
+	DbUrl       string `env:"DB_URL"`
+	Platform    string `env:"PLATFORM"`
+	TokenSecret string `env:"TOKEN_SECRET"`
+	PolkaKey    string `env:"POLKA_KEY"`
 }
 
 type jsonStruct struct {
@@ -21,7 +18,7 @@ type jsonStruct struct {
 	UserID uuid.UUID `json:"user_id"`
 }
 
-type errStruct struct {
+type ErrStruct struct {
 	Error string `json:"error"`
 }
 
