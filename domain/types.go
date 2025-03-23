@@ -6,13 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-type Env struct {
-	DbUrl       string `env:"DB_URL"`
-	Platform    string `env:"PLATFORM"`
-	TokenSecret string `env:"TOKEN_SECRET"`
-	PolkaKey    string `env:"POLKA_KEY"`
-}
-
 type jsonStruct struct {
 	Body   string    `json:"body"`
 	UserID uuid.UUID `json:"user_id"`

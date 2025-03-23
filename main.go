@@ -1,46 +1,57 @@
 package main
 
 import (
+	"Chirpy/config"
+	"Chirpy/internal/database"
+	"Chirpy/internal/handler"
+	"Chirpy/internal/service"
 	"context"
+	"database/sql"
+	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/ilyakaznacheev/cleanenv"
+	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
 
 func main() {
-	//Cfg := config.NewConfig()
+	Cfg := config.NewConfig()
 	//подключение к базе
-	/*err := godotenv.Load()
+	err := godotenv.Load()
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
-	var env domain.Env
-	err = cleanenv.ReadEnv(&env)
+	//var env config.Config
+	err = cleanenv.ReadEnv(&Cfg)
 	if err != nil {
 		log.Fatal(err)
-	}*/
-	/*
-		db, err := sql.Open("postgres", env.DbUrl)
-		if err != nil {
-			log.Fatal(err)
-		}
-		err = db.Ping()
-		if err != nil {
-			log.Fatal("Error connecting to the database:", err)
-		}
-		defer db.Close()
-	*/
+	}
+	db, err := sql.Open("postgres", Cfg.DbUrl)
+	if err != nil {
+		slog.Error("failed to open database connection", "err", err)
+	}
+	defer db.Close()
 
-	//dbQueries := database.New(db)
-	//Cfg.db = dbQueries
-	//Cfg.platform = os.Getenv("PLATFORM")
-	//Cfg.tokenSecret = os.Getenv("TOKEN_SECRET")
-	//Cfg.polkaKey = os.Getenv("POLKA_KEY")
+	// Проверяем подключение
+	err = db.Ping()
+	if err != nil {
+		slog.Error("failed to ping database:", "err", err)
+	}
+
+	fmt.Println("Connected to PostgreSQL database!")
+
+	dbQueries := database.New(db) //repository
+
+	ServiceUser := service.NewServiceUser()
+	Service := service.NewService(dbQueries)
+	Handler := handler.NewHandler(Service, ServiceUser)
 
 	port := "8080"
 	mux := http.NewServeMux()
@@ -49,24 +60,24 @@ func main() {
 		Handler: mux,
 	}
 
-	mux.Handle("/app/", middlewareMetricsInc(http.StripPrefix("/app/", http.FileServer(http.Dir(".")))))
+	mux.Handle("/app/", handler.MiddlewareMetricsInc(Cfg, http.StripPrefix("/app/", http.FileServer(http.Dir(".")))))
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
-	mux.HandleFunc("GET /admin/metrics", metricsHandler)
-	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)
-	mux.HandleFunc("POST /api/chirps", apiCfg.chirpHandler)
-	mux.HandleFunc("POST /api/users", apiCfg.createUserHandler)
-	mux.HandleFunc("GET /api/chirps", apiCfg.getChirpsHandler)
-	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.getOneChirpHandler)
-	mux.HandleFunc("POST /api/login", apiCfg.loginHandler)
-	mux.HandleFunc("POST /api/refresh", apiCfg.refreshHandler)
-	mux.HandleFunc("POST /api/revoke", apiCfg.revokeHandler)
-	mux.HandleFunc("PUT /api/users", apiCfg.putUsersHandler)
-	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.deleteChirpHandler)
-	mux.HandleFunc("POST /api/polka/webhooks", apiCfg.webhooksHandler)
+	mux.HandleFunc("GET /admin/metrics", Handler.MetricsHandler)
+	mux.HandleFunc("POST /admin/reset", Handler.ResetHandler)
+	mux.HandleFunc("POST /api/chirps", Handler.ChirpHandler)
+	mux.HandleFunc("POST /api/users", Handler.CreateUserHandler)
+	mux.HandleFunc("GET /api/chirps", Handler.GetChirpsHandler)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", Handler.GetOneChirpHandler)
+	mux.HandleFunc("POST /api/login", Handler.LoginHandler)
+	mux.HandleFunc("POST /api/refresh", Handler.RefreshHandler)
+	mux.HandleFunc("POST /api/revoke", Handler.RevokeHandler)
+	mux.HandleFunc("PUT /api/users", Handler.PutUsersHandler)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", Handler.DeleteChirpHandler)
+	mux.HandleFunc("POST /api/polka/webhooks", Handler.WebhooksHandler)
 
 	// Канал для получения сигналов завершения
 	signalChannel := make(chan os.Signal, 1)

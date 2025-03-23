@@ -39,7 +39,7 @@ func (q *Queries) CreateChirp(ctx context.Context, arg CreateChirpParams) (Chirp
 		&i.Body,
 		&i.UserID,
 	)
-	return i, err
+	return (i), err
 }
 
 const deleteChirp = `-- name: DeleteChirp :exec
