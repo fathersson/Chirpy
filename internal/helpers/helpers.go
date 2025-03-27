@@ -1,21 +1,17 @@
 package helpers
 
 import (
-	"Chirpy/config"
 	"Chirpy/internal/auth"
-	"Chirpy/respond"
 	"net/http"
 	"strings"
 )
 
-func CheckApiKey(Cfg *config.Config, w http.ResponseWriter, r *http.Request) bool {
-	apiKey, err := auth.GetAPIKey(r.Header)
+func CheckApiKey(header http.Header, POLKAKEY string) bool {
+	apiKey, err := auth.GetAPIKey(header)
 	if err != nil {
-		respond.RespondWithError(w, http.StatusUnauthorized, "Invalid Authorization header")
 		return false
 	}
-	if apiKey != Cfg.PolkaKey {
-		respond.RespondWithError(w, http.StatusUnauthorized, "Invalid API key")
+	if apiKey != POLKAKEY {
 		return false
 	}
 	return true

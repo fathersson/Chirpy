@@ -1,10 +1,9 @@
 package main
 
 import (
-	"Chirpy/config"
+	"Chirpy/internal/config"
 	"Chirpy/internal/database"
 	"Chirpy/internal/handler"
-	"Chirpy/internal/service"
 	"context"
 	"database/sql"
 	"fmt"
@@ -33,7 +32,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db, err := sql.Open("postgres", Cfg.DbUrl)
+	db, err := sql.Open("postgres", Cfg.DBURL)
 	if err != nil {
 		slog.Error("failed to open database connection", "err", err)
 	}
@@ -49,9 +48,9 @@ func main() {
 
 	dbQueries := database.New(db) //repository
 
-	ServiceUser := service.NewServiceUser()
-	Service := service.NewService(dbQueries)
-	Handler := handler.NewHandler(Service, ServiceUser)
+	//service := handler.NewService(dbQueries)
+	//Service := handler.NewService()
+	Handler := handler.NewHandler(dbQueries, service)
 
 	port := "8080"
 	mux := http.NewServeMux()

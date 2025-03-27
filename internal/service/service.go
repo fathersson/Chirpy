@@ -1,14 +1,12 @@
 package service
 
 import (
-	"Chirpy/config"
-	"Chirpy/domain"
 	"Chirpy/internal/auth"
 	"Chirpy/internal/database"
+	"Chirpy/internal/domain"
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 
 	"github.com/google/uuid"
 )
@@ -20,6 +18,7 @@ type Database interface {
 	GetChirpsAuthorID(context.Context, uuid.UUID) ([]database.Chirp, error)
 	GetChirp(context.Context, uuid.UUID) (database.Chirp, error)
 	CheckUser(ctx context.Context, id uuid.UUID) (database.User, error)
+	//CheckUser(ctx context.Context, id uuid.UUID) (database.User, error)
 	UpdateChirpyRed(ctx context.Context, id uuid.UUID) (database.User, error)
 	DeleteChirp(ctx context.Context, id uuid.UUID) error
 	DeleteUsers(ctx context.Context) error
@@ -31,45 +30,12 @@ type Database interface {
 	//QueryContext(context.Context, string, ...interface{}) (*sql.Rows, error)
 }
 
-type DbUser interface {
-	GetUserId(Cfg *config.Config, header http.Header) (userId uuid.UUID, err error)
-	CreateRowUser(context context.Context, returnParams database.User) (user domain.User, err error)
-	CreateRowChirp(context context.Context, cleanedChirp database.Chirp) (chirp domain.Chirp, err error)
-	GetChirpsAuthor(context context.Context, authorStr string, sortOrder string) (chirpStruct []domain.Chirp, err error)
-	GetOneChirp(chirpId string, context context.Context) (chirp domain.Chirp, err error)
-}
-
-type ServiceUser struct {
-	DbU DbUser
-}
-
-func NewServiceUser() *ServiceUser {
-	return &ServiceUser{}
-}
-
 // Структура сервиса, которая использует интерфейс Database
-type Service struct {
+type Db struct {
 	Db Database
 }
 
-// Конструктор сервиса, который принимает интерфейс Database
-func NewService(db Database) *Service {
-	return &Service{Db: db}
-}
-
-func (s *Service) GetUserId(Cfg *config.Config, header http.Header) (userId uuid.UUID, err error) {
-	token, err := auth.GetBearerToken(header)
-	if err != nil {
-		return userId, err
-	}
-	userId, err = auth.ValidateJWT(token, Cfg.TokenSecret)
-	if err != nil {
-		return userId, err
-	}
-	return userId, nil
-}
-
-func (s *Service) CreateRowUser(context context.Context, returnParams database.User) (user domain.User, err error) {
+func (s *Db) CreateRowUser(context context.Context, returnParams domain.User) (user domain.User, err error) {
 	CreateHash(&returnParams)
 	createUserParams := database.CreateUserParams{
 		Email:          returnParams.Email,
@@ -82,7 +48,7 @@ func (s *Service) CreateRowUser(context context.Context, returnParams database.U
 	return ToUser(userD), nil
 }
 
-func (s *Service) CreateRowChirp(context context.Context, cleanedChirp database.Chirp) (chirp domain.Chirp, err error) {
+func (s *Db) CreateRowChirp(context context.Context, cleanedChirp domain.Chirp) (chirp domain.Chirp, err error) {
 	ChirpParams := database.CreateChirpParams{
 		Body:   cleanedChirp.Body,
 		UserID: cleanedChirp.UserID,
@@ -136,7 +102,7 @@ func (s *Service) CreateRowChirp(context context.Context, cleanedChirp database.
 	return chirpsForStruct(chirps), nil
 }*/
 
-func (s *Service) GetOneChirp(chirpId string, context context.Context) (chirp domain.Chirp, err error) {
+func (s *Db) GetOneChirp(chirpId string, context context.Context) (chirp domain.Chirp, err error) {
 	chirpParse, err := uuid.Parse(chirpId)
 	if err != nil {
 		return domain.Chirp{}, err
@@ -150,7 +116,7 @@ func (s *Service) GetOneChirp(chirpId string, context context.Context) (chirp do
 	return chirpStruct, nil
 }
 
-func CreateHash(returnParams *database.User) {
+func CreateHash(returnParams *domain.User) {
 	var err error
 	returnParams.HashedPassword, err = auth.HashPassword(returnParams.HashedPassword)
 	if err != nil {
@@ -178,8 +144,8 @@ func ToUser(dbUser database.User) domain.User {
 	}
 }
 
-func ToDbUser(user domain.User) database.User {
-	return database.User{
+func ToDbUser(user domain.User) domain.User {
+	return domain.User{
 		ID:        user.ID,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
@@ -187,9 +153,9 @@ func ToDbUser(user domain.User) database.User {
 	}
 }
 
-func chirpsForStruct(chirps []database.Chirp) (chirpStruct []domain.Chirp) {
+/*func chirpsForStruct(chirps []database.Chirp) (chirpStruct []domain.Chirp) {
 	for _, v := range chirps {
 		chirpStruct = append(chirpStruct, ToChirp(v))
 	}
 	return
-}
+}*/

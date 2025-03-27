@@ -1,15 +1,18 @@
 package handler
 
 import (
-	"Chirpy/config"
-	"Chirpy/decoding"
-	"Chirpy/domain"
-	"Chirpy/helpers"
 	"Chirpy/internal/auth"
+	"Chirpy/internal/config"
 	"Chirpy/internal/database"
+	"Chirpy/internal/decoding"
+	"Chirpy/internal/domain"
+	"Chirpy/internal/helpers"
+	"Chirpy/internal/respond"
 	"Chirpy/internal/service"
-	"Chirpy/respond"
-	"Chirpy/tokens"
+
+	//"Chirpy/internal/service"
+	"Chirpy/internal/tokens"
+	"context"
 	"fmt"
 	"sort"
 	"time"
@@ -20,21 +23,38 @@ import (
 	"github.com/google/uuid"
 )
 
+type ServiceInt interface {
+	GetUserId(Cfg *config.Config, header http.Header) (userId uuid.UUID, err error)
+	CreateRowUser(context context.Context, returnParams domain.User) (user domain.User, err error)
+	CreateRowChirp(context context.Context, cleanedChirp domain.Chirp) (chirp domain.Chirp, err error)
+	GetChirpsAuthor(context context.Context, authorStr string, sortOrder string) (chirpStruct []domain.Chirp, err error)
+	GetOneChirp(chirpId string, context context.Context) (chirp domain.Chirp, err error)
+}
+
+type ServiceStr struct {
+	Service *ServiceInt
+}
+
+func NewService(Service *ServiceInt) *ServiceStr {
+	return &ServiceStr{Service: Service}
+}
+
 // Handler структура для обработки HTTP запросов
 type Handler struct {
-	service     *service.Service
-	serviceUser *service.ServiceUser
-	cfg         *config.Config
+	db      service.Database
+	service ServiceInt
+	cfg     *config.Config
 }
 
 // Конструктор для создания нового обработчика
-func NewHandler(s *service.Service, ServiceUser *service.ServiceUser) *Handler {
-	return &Handler{service: s, serviceUser: ServiceUser}
+func NewHandler(db service.Database, service ServiceInt) *Handler {
+	return &Handler{db: db, service: service}
 }
 
 func (h Handler) WebhooksHandler(w http.ResponseWriter, r *http.Request) {
 	var webhookData domain.Webhook
-	if !helpers.CheckApiKey(h.cfg, w, r) {
+	if !helpers.CheckApiKey(r.Header, h.cfg.POLKAKEY) {
+		respond.RespondWithError(w, http.StatusUnauthorized, "Invalid Authorization header or invalid API key")
 		return
 	}
 	defer r.Body.Close()
@@ -53,13 +73,13 @@ func (h Handler) WebhooksHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = h.service.Db.CheckUser(r.Context(), webhookData.Data.UserID)
+	_, err = h.db.CheckUser(r.Context(), webhookData.Data.UserID)
 	if err != nil {
 		respond.RespondWithError(w, http.StatusNotFound, "User Not Found")
 		return
 	}
 
-	_, err = h.service.Db.UpdateChirpyRed(r.Context(), webhookData.Data.UserID)
+	_, err = h.db.UpdateChirpyRed(r.Context(), webhookData.Data.UserID)
 	if err != nil {
 		respond.RespondWithError(w, http.StatusInternalServerError, "Could not update Chirpy Red")
 		return
@@ -69,7 +89,7 @@ func (h Handler) WebhooksHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) DeleteChirpHandler(w http.ResponseWriter, r *http.Request) {
-	userId, err := h.service.GetUserId(h.cfg, r.Header)
+	userId, err := GetUserId(h.cfg, r.Header)
 	if err != nil {
 		respond.RespondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
@@ -77,7 +97,7 @@ func (h Handler) DeleteChirpHandler(w http.ResponseWriter, r *http.Request) {
 
 	chirpId := r.PathValue("chirpID")
 	context := r.Context()
-	chirpStruct, err := h.serviceUser.DbU.GetOneChirp(chirpId, context)
+	chirpStruct, err := h.service.GetOneChirp(chirpId, context)
 	if err != nil {
 		respond.RespondWithError(w, http.StatusBadRequest, fmt.Sprintf("%v", err))
 	}
@@ -90,7 +110,7 @@ func (h Handler) DeleteChirpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.service.Db.DeleteChirp(r.Context(), chirpStruct.ID)
+	err = h.db.DeleteChirp(r.Context(), chirpStruct.ID)
 	if err != nil {
 		respond.RespondWithError(w, http.StatusInternalServerError, "Failed to delete chirp")
 		return
@@ -99,22 +119,34 @@ func (h Handler) DeleteChirpHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) PutUsersHandler(w http.ResponseWriter, r *http.Request) {
-	userId, err := h.serviceUser.DbU.GetUserId(h.cfg, r.Header)
+	userId, err := h.service.GetUserId(h.cfg, r.Header)
 	if err != nil {
 		respond.RespondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
-	body := decoding.Decoding(h.cfg, w, r)
-	//var err error
-	body.Password, err = auth.HashPassword(body.Password)
+	// Читаем тело запроса в байтовый срез
+	body := make([]byte, r.ContentLength)
+	_, err = r.Body.Read(body)
+	if err != nil {
+		respond.RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	// Декодируем тело запроса в структуру User
+	params, err := decoding.DecodingUser(body)
+	if err != nil {
+		respond.RespondWithError(w, http.StatusBadRequest, "Invalid user data")
+		return
+	}
+
+	params.Password, err = auth.HashPassword(params.Password)
 	if err != nil {
 		respond.RespondWithError(w, 500, "Error hashing password")
 		return
 	}
-	updateUser, err := h.service.Db.UpdateEMailPasword(r.Context(), database.UpdateEMailPaswordParams{
-		Email:          body.Email,
-		HashedPassword: body.Password,
+	updateUser, err := h.db.UpdateEMailPasword(r.Context(), database.UpdateEMailPaswordParams{
+		Email:          params.Email,
+		HashedPassword: params.Password,
 		ID:             userId,
 	})
 	if err != nil {
@@ -132,7 +164,7 @@ func (h Handler) RevokeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.service.Db.RevokeToken(r.Context(), bearerToken)
+	err = h.db.RevokeToken(r.Context(), bearerToken)
 	if err != nil {
 		respond.RespondWithError(w, 404, "Error revoking token")
 		return
@@ -146,7 +178,7 @@ func (h Handler) RefreshHandler(w http.ResponseWriter, r *http.Request) {
 		respond.RespondWithError(w, 401, "Error getting token")
 		return
 	}
-	RefreshToken, err := h.service.Db.GetUserFromRefreshToken(r.Context(), bearerToken)
+	RefreshToken, err := h.db.GetUserFromRefreshToken(r.Context(), bearerToken)
 	if err != nil {
 		respond.RespondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
@@ -160,7 +192,7 @@ func (h Handler) RefreshHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newToken, err := auth.MakeJWT(RefreshToken.UserID, h.cfg.TokenSecret)
+	newToken, err := auth.MakeJWT(RefreshToken.UserID, h.cfg.TOKENSECRET)
 	if err != nil {
 		respond.RespondWithError(w, http.StatusInternalServerError, "Error creating token")
 		return
@@ -174,26 +206,38 @@ func (h Handler) RefreshHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) LoginHandler(w http.ResponseWriter, r *http.Request) {
-	returnParams := decoding.Decoding(h.cfg, w, r)
+	// Читаем тело запроса в байтовый срез
+	body := make([]byte, r.ContentLength)
+	_, err := r.Body.Read(body)
+	if err != nil {
+		respond.RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	// Декодируем тело запроса в структуру User
+	params, err := decoding.DecodingUser(body)
+	if err != nil {
+		respond.RespondWithError(w, http.StatusBadRequest, "Invalid user data")
+		return
+	}
 
-	user, err := h.service.Db.GetUser(r.Context(), returnParams.Email)
+	user, err := h.db.GetUser(r.Context(), params.Email)
 	if err != nil {
 		respond.RespondWithError(w, http.StatusUnauthorized, "Incorrect email")
 		return
 	}
 
-	err = tokens.CheckPassword(returnParams.Password, user.HashedPassword)
+	err = tokens.CheckPassword(params.Password, user.HashedPassword)
 	if err != nil {
 		respond.RespondWithError(w, http.StatusUnauthorized, "Incorrect password")
 		return
 	}
-	token, err := tokens.GetToken(user.ID, h.cfg.TokenSecret)
+	token, err := tokens.GetToken(user.ID, h.cfg.TOKENSECRET)
 	if err != nil {
 		respond.RespondWithError(w, http.StatusInternalServerError, fmt.Sprintf("%v", err))
 		return
 	}
 
-	_, err = h.service.Db.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
+	_, err = h.db.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
 		Token:     token.RefreshToken,
 		UserID:    user.ID,
 		ExpiresAt: token.ExpiresAt,
@@ -217,10 +261,23 @@ func (h Handler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) CreateUserHandler(w http.ResponseWriter, r *http.Request) {
-	returnParams := decoding.Decoding(h.cfg, w, r)
+	// Читаем тело запроса в байтовый срез
+	body := make([]byte, r.ContentLength)
+	_, err := r.Body.Read(body)
+	if err != nil {
+		respond.RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	// Декодируем тело запроса в структуру User
+	params, err := decoding.DecodingUser(body)
+	if err != nil {
+		respond.RespondWithError(w, http.StatusBadRequest, "Invalid user data")
+		return
+	}
+
 	context := r.Context()
-	DbUser := service.ToDbUser(returnParams)
-	user, err := h.serviceUser.DbU.CreateRowUser(context, DbUser)
+	DbUser := service.ToDbUser(params)
+	user, err := h.service.CreateRowUser(context, DbUser)
 	if err != nil {
 		respond.RespondWithError(w, http.StatusInternalServerError, "Something went wrong")
 	}
@@ -228,20 +285,20 @@ func (h Handler) CreateUserHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) ResetHandler(w http.ResponseWriter, r *http.Request) {
-	if h.cfg.Platform != "dev" {
+	if h.cfg.PLATFORM != "dev" {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	h.cfg.FileserverHits.Store(0)
+	h.cfg.FILESERVERHITS.Store(0)
 	w.WriteHeader(http.StatusOK)
-	h.service.Db.DeleteUsers(r.Context())
+	h.db.DeleteUsers(r.Context())
 	//он удалял всех пользователей из базы данных (не изменяя схему)
 }
 
 func (h Handler) ChirpHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	userId, err := h.serviceUser.DbU.GetUserId(h.cfg, r.Header)
+	userId, err := h.service.GetUserId(h.cfg, r.Header)
 	if err != nil {
 		respond.RespondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
@@ -250,17 +307,31 @@ func (h Handler) ChirpHandler(w http.ResponseWriter, r *http.Request) {
 	errLong := domain.ErrStruct{
 		Error: "Chirp is too long",
 	}
-	params := decoding.DecodingChirp(h.cfg, w, r)
+
+	// Читаем тело запроса в байтовый срез
+	body := make([]byte, r.ContentLength)
+	_, err = r.Body.Read(body)
+	if err != nil {
+		respond.RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	// Декодируем тело запроса в структуру User
+	params, err := decoding.DecodingChirp(body)
+	if err != nil {
+		respond.RespondWithError(w, http.StatusBadRequest, "Invalid user data")
+		return
+	}
+
 	if len(params.Body) > 140 {
 		respond.RespondWithError(w, http.StatusBadRequest, errLong.Error)
 		return
 	}
-	cleanedChirp := database.Chirp{
+	cleanedChirp := domain.Chirp{
 		Body:   helpers.CleanBody(params.Body),
 		UserID: userId,
 	}
 	context := r.Context()
-	chirp, err := h.serviceUser.DbU.CreateRowChirp(context, cleanedChirp)
+	chirp, err := h.service.CreateRowChirp(context, cleanedChirp)
 	if err != nil {
 		respond.RespondWithError(w, http.StatusInternalServerError, "Error creating chirp")
 	}
@@ -271,7 +342,7 @@ func (h Handler) GetOneChirpHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	chirpId := r.PathValue("chirpID")
 	context := r.Context()
-	chirpStruct, err := h.serviceUser.DbU.GetOneChirp(chirpId, context)
+	chirpStruct, err := h.service.GetOneChirp(chirpId, context)
 	if err != nil {
 		respond.RespondWithError(w, http.StatusBadRequest, fmt.Sprintf("%v", err))
 	}
@@ -289,7 +360,7 @@ func (h Handler) GetChirpsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chirps, err := h.serviceUser.DbU.GetChirpsAuthor(context, authorStr, sortStr)
+	chirps, err := h.service.GetChirpsAuthor(context, authorStr, sortStr)
 	if err != nil {
 		respond.RespondWithError(w, http.StatusBadRequest, fmt.Sprintf("%v", err))
 	}
@@ -315,14 +386,26 @@ func (h Handler) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 		<h1>Welcome, Chirpy Admin</h1>
 		<p>Chirpy has been visited %d times!</p>
 	</body>
-	</html>`, h.cfg.FileserverHits.Load()))
+	</html>`, h.cfg.FILESERVERHITS.Load()))
 	w.Write(bb)
 }
 
 func MiddlewareMetricsInc(cfg *config.Config, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cfg.FileserverHits.Add(1)
+		cfg.FILESERVERHITS.Add(1)
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func GetUserId(Cfg *config.Config, header http.Header) (userId uuid.UUID, err error) {
+	token, err := auth.GetBearerToken(header)
+	if err != nil {
+		return userId, err
+	}
+	userId, err = auth.ValidateJWT(token, Cfg.TOKENSECRET)
+	if err != nil {
+		return userId, err
+	}
+	return userId, nil
 }
