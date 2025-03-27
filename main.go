@@ -47,9 +47,11 @@ func main() {
 	fmt.Println("Connected to PostgreSQL database!")
 
 	dbQueries := database.New(db) //repository
-
 	//service := handler.NewService(dbQueries)
 	//Service := handler.NewService()
+	//var b handler.ServiceStr
+	//service := handler.NewService(b.Service)
+	var service handler.ServiceInt
 	Handler := handler.NewHandler(dbQueries, service)
 
 	port := "8080"

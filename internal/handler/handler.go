@@ -31,13 +31,13 @@ type ServiceInt interface {
 	GetOneChirp(chirpId string, context context.Context) (chirp domain.Chirp, err error)
 }
 
-type ServiceStr struct {
+/*type ServiceStr struct {
 	Service *ServiceInt
 }
 
 func NewService(Service *ServiceInt) *ServiceStr {
 	return &ServiceStr{Service: Service}
-}
+}*/
 
 // Handler структура для обработки HTTP запросов
 type Handler struct {
