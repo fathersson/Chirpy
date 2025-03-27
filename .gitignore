@@ -1,0 +1,44 @@
+# Системные файлы
+.DS_Store           # macOS
+Thumbs.db           # Windows
+
+# Скомпилированные файлы Go
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+
+# Каталоги и файлы временных данных
+*.log
+*.tmp
+
+# Папка с зависимостями Go (например, `vendor`)
+vendor/
+
+# Файлы настройки IDE
+.idea/
+.vscode/
+*.swp
+
+# Файлы настройки Go
+*.go.*.swp
+go.sum
+
+# Папка миграций Goose (если используете Goose для миграций)
+migrations/
+
+# Конфигурации для инструмента sqlc
+/sqlc.yaml
+/sqlc.json
+
+# Каталоги и файлы, связанные с Docker
+.docker/
+
+# Папка с билд-артефактами
+build/
+
+# 
+.env
